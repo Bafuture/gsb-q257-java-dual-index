@@ -19,6 +19,26 @@ Pair-wise GSB 标注任务仓库（第 16 批 / 257）。
 ./mvnw -q verify
 ```
 
+## 实现说明
+
+核心代码位于 `src/main/java/com/example/gsb/dualindex/`：
+
+| 类 | 职责 |
+|----|------|
+| `DualIndexStore` | 双索引门面：读写锁保证原子可见性，写操作双侧更新 + 失败回滚，提供一致性检查、修复与统计 |
+| `HashIndex` / `MapHashIndex` | 主键哈希索引（接口 + 默认 HashMap 实现），操作原子（抛错即无状态变更） |
+| `OrderedIndex` / `TreeMapOrderedIndex` | 排序键有序索引（接口 + 默认 TreeMap 实现），支持等值排序键与闭区间范围查询 |
+| `Entry` | 不可变数据记录，两个索引引用同一实例 |
+| `ConsistencyReport` / `IndexDifference` | 一致性扫描结果，逐条列出差异明细（缺失 / 孤儿 / 过期槽位 / 数据不一致） |
+| `RepairResult` / `IndexStats` | 修复结果（修复条数 + 动作明细）与统计快照（两索引条目数、更新次数、不一致次数、累计修复条数） |
+
+设计要点：
+
+- **原子写入**：`put`/`remove`/`updateSortKey` 先改一侧再改另一侧，任一侧失败即回滚已成功的一侧并抛出 `IndexUpdateException`。
+- **排序键更新**：先从有序索引删除旧槽位，再插入新位置，最后重指哈希索引；全程写锁，读者不会看到重复条目。
+- **并发一致性**：`ReentrantReadWriteLock`，读操作（`get`/`rangeQuery`/`checkConsistency`）在写操作进行中阻塞，只会读到写前或写后的完整快照。
+- **修复幂等**：`repair()` 基于一次全新差异扫描逐条修复，健康存储上再次执行为 0 条。
+
 ## 任务提示词
 
 以下为本题完整的 User Prompt 原文，两次执行必须使用完全相同的文本。
